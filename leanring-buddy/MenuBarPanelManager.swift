@@ -16,6 +16,8 @@ import SwiftUI
 
 extension Notification.Name {
     static let clickyDismissPanel = Notification.Name("clickyDismissPanel")
+    /// Posted (e.g. by the notch) to open/close the menu bar panel.
+    static let clickyTogglePanel = Notification.Name("clickyTogglePanel")
 }
 
 /// Custom NSPanel subclass that can become the key window even with
@@ -30,6 +32,7 @@ final class MenuBarPanelManager: NSObject {
     private var panel: NSPanel?
     private var clickOutsideMonitor: Any?
     private var dismissPanelObserver: NSObjectProtocol?
+    private var togglePanelObserver: NSObjectProtocol?
 
     private let companionManager: CompanionManager
     private let panelWidth: CGFloat = 320
@@ -47,6 +50,14 @@ final class MenuBarPanelManager: NSObject {
         ) { [weak self] _ in
             self?.hidePanel()
         }
+
+        togglePanelObserver = NotificationCenter.default.addObserver(
+            forName: .clickyTogglePanel,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.statusItemClicked()
+        }
     }
 
     deinit {
@@ -54,6 +65,9 @@ final class MenuBarPanelManager: NSObject {
             NSEvent.removeMonitor(monitor)
         }
         if let observer = dismissPanelObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = togglePanelObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
