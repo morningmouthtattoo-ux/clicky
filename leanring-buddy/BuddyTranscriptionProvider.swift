@@ -34,6 +34,7 @@ enum BuddyTranscriptionProviderFactory {
         case assemblyAI = "assemblyai"
         case openAI = "openai"
         case appleSpeech = "apple"
+        case whisper = "whisper"
     }
 
     static func makeDefaultProvider() -> any BuddyTranscriptionProvider {
@@ -50,6 +51,10 @@ enum BuddyTranscriptionProviderFactory {
 
         let assemblyAIProvider = AssemblyAIStreamingTranscriptionProvider()
         let openAIProvider = OpenAIAudioTranscriptionProvider()
+
+        if preferredProvider == .whisper {
+            return WhisperTranscriptionProvider()
+        }
 
         if preferredProvider == .appleSpeech {
             return AppleSpeechTranscriptionProvider()

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		968A08C92FD270CC00CBAC9A /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 968A08C82FD270CC00CBAC9A /* WhisperKit */; };
 		AA00BB032F6500030039DA55 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB022F6500020039DA55 /* Sparkle */; };
 		AA00BB062F6500060039DA55 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB052F6500050039DA55 /* PostHog */; };
 /* End PBXBuildFile section */
@@ -29,7 +30,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		28F22CBF2F56440300A0FC59 /* Clicky.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Big Bot.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		28F22CBF2F56440300A0FC59 /* Big Bot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Big Bot.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		28F22CCC2F56440300A0FC59 /* leanring-buddyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "leanring-buddyTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		28F22CD62F56440300A0FC59 /* leanring-buddyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "leanring-buddyUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -59,6 +60,7 @@
 			files = (
 				AA00BB032F6500030039DA55 /* Sparkle in Frameworks */,
 				AA00BB062F6500060039DA55 /* PostHog in Frameworks */,
+				968A08C92FD270CC00CBAC9A /* WhisperKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -92,7 +94,7 @@
 		28F22CC02F56440300A0FC59 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				28F22CBF2F56440300A0FC59 /* Clicky.app */,
+				28F22CBF2F56440300A0FC59 /* Big Bot.app */,
 				28F22CCC2F56440300A0FC59 /* leanring-buddyTests.xctest */,
 				28F22CD62F56440300A0FC59 /* leanring-buddyUITests.xctest */,
 			);
@@ -121,9 +123,10 @@
 			packageProductDependencies = (
 				AA00BB022F6500020039DA55 /* Sparkle */,
 				AA00BB052F6500050039DA55 /* PostHog */,
+				968A08C82FD270CC00CBAC9A /* WhisperKit */,
 			);
 			productName = "leanring-buddy";
-			productReference = 28F22CBF2F56440300A0FC59 /* Clicky.app */;
+			productReference = 28F22CBF2F56440300A0FC59 /* Big Bot.app */;
 			productType = "com.apple.product-type.application";
 		};
 		28F22CCB2F56440300A0FC59 /* leanring-buddyTests */ = {
@@ -207,6 +210,7 @@
 			packageReferences = (
 				AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */,
 				AA00BB042F6500040039DA55 /* XCRemoteSwiftPackageReference "posthog-ios" */,
+				968A08C72FD270CC00CBAC9A /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 28F22CC02F56440300A0FC59 /* Products */;
@@ -600,6 +604,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		968A08C72FD270CC00CBAC9A /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 		AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/sparkle-project/Sparkle";
@@ -619,6 +631,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		968A08C82FD270CC00CBAC9A /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 968A08C72FD270CC00CBAC9A /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
 		AA00BB022F6500020039DA55 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = AA00BB012F6500010039DA55 /* XCRemoteSwiftPackageReference "Sparkle" */;
