@@ -351,9 +351,10 @@ struct BlueCursorView: View {
             // timer controls position directly at 60fps for a smooth arc flight.
             Image(systemName: "face.smiling")
                 .font(.system(size: 16, weight: .regular))
-                .foregroundStyle(DS.Colors.overlayCursorBlue)
+                .foregroundStyle(.white)
                 .frame(width: 18, height: 18)
-                .shadow(color: DS.Colors.overlayCursorBlue, radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
+                // Soft dark halo so the white face stays visible on light backgrounds.
+                .shadow(color: Color.black.opacity(0.5), radius: 3 + (buddyFlightScale - 1.0) * 12, x: 0, y: 1)
                 .scaleEffect(buddyFlightScale)
                 .opacity(buddyIsVisibleOnThisScreen && (companionManager.voiceState == .idle || companionManager.voiceState == .responding) ? cursorOpacity : 0)
                 .position(cursorPosition)
