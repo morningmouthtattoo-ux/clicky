@@ -180,6 +180,9 @@ private final class WhisperTranscriptionSession: BuddyStreamingTranscriptionSess
     }
 
     deinit {
-        cancel()
+        // Only do deinit-safe work here. Calling cancel() would dispatch a
+        // closure capturing self while the object is being deallocated, which
+        // crashes the Swift runtime. Cancelling the task captures nothing.
+        transcriptionTask?.cancel()
     }
 }
