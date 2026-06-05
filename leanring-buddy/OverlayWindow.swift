@@ -70,6 +70,53 @@ struct Triangle: Shape {
     }
 }
 
+// A downward-curving smile, drawn to fill its rect (start left, dip in middle, up right).
+struct SmileArc: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY),
+            control: CGPoint(x: rect.midX, y: rect.maxY)
+        )
+        return path
+    }
+}
+
+// Big Bot's face — a simple smiley that scales to its frame. Used both for the
+// floating cursor and (later) the notch. Eyes and mouth scale with the face size.
+struct BigBotSmileyView: View {
+    var faceColor: Color
+    var featureColor: Color = Color.black.opacity(0.78)
+
+    var body: some View {
+        GeometryReader { geometry in
+            let faceSize = min(geometry.size.width, geometry.size.height)
+            let eyeDiameter = faceSize * 0.13
+            ZStack {
+                Circle()
+                    .fill(faceColor)
+
+                Circle()
+                    .fill(featureColor)
+                    .frame(width: eyeDiameter, height: eyeDiameter)
+                    .position(x: faceSize * 0.37, y: faceSize * 0.41)
+
+                Circle()
+                    .fill(featureColor)
+                    .frame(width: eyeDiameter, height: eyeDiameter)
+                    .position(x: faceSize * 0.63, y: faceSize * 0.41)
+
+                SmileArc()
+                    .stroke(featureColor, style: StrokeStyle(lineWidth: faceSize * 0.09, lineCap: .round))
+                    .frame(width: faceSize * 0.46, height: faceSize * 0.26)
+                    .position(x: faceSize * 0.5, y: faceSize * 0.56)
+            }
+            .frame(width: faceSize, height: faceSize)
+        }
+    }
+}
+
 // PreferenceKey for tracking bubble size
 struct SizePreferenceKey: PreferenceKey {
     static var defaultValue: CGSize = .zero
@@ -302,10 +349,8 @@ struct BlueCursorView: View {
             // During cursor following: fast spring animation for snappy tracking.
             // During navigation: NO implicit animation — the frame-by-frame bezier
             // timer controls position directly at 60fps for a smooth arc flight.
-            Triangle()
-                .fill(DS.Colors.overlayCursorBlue)
-                .frame(width: 16, height: 16)
-                .rotationEffect(.degrees(triangleRotationDegrees))
+            BigBotSmileyView(faceColor: DS.Colors.overlayCursorBlue)
+                .frame(width: 18, height: 18)
                 .shadow(color: DS.Colors.overlayCursorBlue, radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
                 .scaleEffect(buddyFlightScale)
                 .opacity(buddyIsVisibleOnThisScreen && (companionManager.voiceState == .idle || companionManager.voiceState == .responding) ? cursorOpacity : 0)
@@ -317,10 +362,6 @@ struct BlueCursorView: View {
                     value: cursorPosition
                 )
                 .animation(.easeIn(duration: 0.25), value: companionManager.voiceState)
-                .animation(
-                    buddyNavigationMode == .navigatingToTarget ? nil : .easeInOut(duration: 0.3),
-                    value: triangleRotationDegrees
-                )
 
             // Blue waveform — replaces the triangle while listening
             BlueCursorWaveformView(audioPowerLevel: companionManager.currentAudioPowerLevel)

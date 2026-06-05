@@ -75,8 +75,8 @@ final class MenuBarPanelManager: NSObject {
     /// from the original Clicky. Rendered as a template image so macOS tints it
     /// to match the menu bar (light/dark).
     private func makeClickyMenuBarIcon() -> NSImage {
-        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-        if let symbolImage = NSImage(systemSymbolName: "bolt.horizontal.circle.fill", accessibilityDescription: "Big Bot")?
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+        if let symbolImage = NSImage(systemSymbolName: "face.smiling", accessibilityDescription: "Big Bot")?
             .withSymbolConfiguration(symbolConfiguration) {
             return symbolImage
         }
