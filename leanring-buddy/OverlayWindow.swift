@@ -349,7 +349,9 @@ struct BlueCursorView: View {
             // During cursor following: fast spring animation for snappy tracking.
             // During navigation: NO implicit animation — the frame-by-frame bezier
             // timer controls position directly at 60fps for a smooth arc flight.
-            BigBotSmileyView(faceColor: DS.Colors.overlayCursorBlue)
+            Image(systemName: "face.smiling")
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(DS.Colors.overlayCursorBlue)
                 .frame(width: 18, height: 18)
                 .shadow(color: DS.Colors.overlayCursorBlue, radius: 8 + (buddyFlightScale - 1.0) * 20, x: 0, y: 0)
                 .scaleEffect(buddyFlightScale)
