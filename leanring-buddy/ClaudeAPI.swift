@@ -11,11 +11,16 @@ class ClaudeAPI {
     private static var hasStartedTLSWarmup = false
 
     private let apiURL: URL
+    private let apiKey: String
     var model: String
     private let session: URLSession
 
-    init(proxyURL: String, model: String = "claude-sonnet-4-6") {
-        self.apiURL = URL(string: proxyURL)!
+    init(apiKey: String, model: String = "claude-sonnet-4-6") {
+        // This fork talks to Claude directly instead of through a Cloudflare
+        // Worker, so the API key (read from the macOS Keychain) is attached to
+        // each request via the x-api-key header in makeAPIRequest().
+        self.apiURL = URL(string: "https://api.anthropic.com/v1/messages")!
+        self.apiKey = apiKey
         self.model = model
 
         // Use .default instead of .ephemeral so TLS session tickets are cached.
@@ -41,6 +46,8 @@ class ClaudeAPI {
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         return request
     }
 
@@ -287,5 +294,109 @@ class ClaudeAPI {
 
         let duration = Date().timeIntervalSince(startTime)
         return (text: text, duration: duration)
+    }
+
+    // MARK: - Tool use (agentic) support
+
+    /// A tool Claude can choose to call (e.g. running Blender Python).
+    struct ToolDefinition {
+        let name: String
+        let description: String
+        /// JSON schema describing the tool's input object.
+        let inputSchema: [String: Any]
+    }
+
+    /// A single request from Claude to invoke a tool.
+    struct ToolUseRequest {
+        let id: String
+        let name: String
+        let input: [String: Any]
+    }
+
+    /// The result of one back-and-forth turn with Claude when tools are in play.
+    struct ConversationTurnResult {
+        /// Why Claude stopped (e.g. "tool_use" or "end_turn").
+        let stopReason: String
+        /// Any plain text Claude produced this turn.
+        let assistantText: String
+        /// Tool calls Claude wants the app to execute.
+        let toolUseRequests: [ToolUseRequest]
+        /// Claude's raw content blocks, appended back into the message list
+        /// verbatim so the tool_result blocks we send next line up by id.
+        let assistantContentBlocks: [[String: Any]]
+    }
+
+    /// Sends a full message list (with optional tools) to Claude and returns one
+    /// turn's result. The caller runs any requested tools, appends their results,
+    /// and calls this again — that loop is what gives Clicky "look, then act".
+    func sendConversationTurn(
+        systemPrompt: String,
+        tools: [ToolDefinition],
+        messages: [[String: Any]],
+        maxTokens: Int = 1024
+    ) async throws -> ConversationTurnResult {
+        var request = makeAPIRequest()
+
+        var body: [String: Any] = [
+            "model": model,
+            "max_tokens": maxTokens,
+            "system": systemPrompt,
+            "messages": messages,
+        ]
+        if !tools.isEmpty {
+            body["tools"] = tools.map { toolDefinition in
+                [
+                    "name": toolDefinition.name,
+                    "description": toolDefinition.description,
+                    "input_schema": toolDefinition.inputSchema,
+                ]
+            }
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let responseString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw NSError(
+                domain: "ClaudeAPI",
+                code: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                userInfo: [NSLocalizedDescriptionKey: "API Error: \(responseString)"]
+            )
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let contentBlocks = json["content"] as? [[String: Any]] else {
+            throw NSError(
+                domain: "ClaudeAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]
+            )
+        }
+
+        let stopReason = json["stop_reason"] as? String ?? ""
+
+        var assistantText = ""
+        var toolUseRequests: [ToolUseRequest] = []
+        for block in contentBlocks {
+            let blockType = block["type"] as? String
+            if blockType == "text", let text = block["text"] as? String {
+                assistantText += text
+            } else if blockType == "tool_use",
+                      let id = block["id"] as? String,
+                      let name = block["name"] as? String {
+                let input = block["input"] as? [String: Any] ?? [:]
+                toolUseRequests.append(ToolUseRequest(id: id, name: name, input: input))
+            }
+        }
+
+        return ConversationTurnResult(
+            stopReason: stopReason,
+            assistantText: assistantText,
+            toolUseRequests: toolUseRequests,
+            assistantContentBlocks: contentBlocks
+        )
     }
 }

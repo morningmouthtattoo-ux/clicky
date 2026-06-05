@@ -68,17 +68,81 @@ final class CompanionManager: ObservableObject {
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
-    /// Base URL for the Cloudflare Worker proxy. All API requests route
-    /// through this so keys never ship in the app binary.
-    private static let workerBaseURL = "https://your-worker-name.your-subdomain.workers.dev"
+    /// Claude client that talks to api.anthropic.com directly using the key
+    /// stored in the macOS Keychain. Nil until the user has entered a key.
+    private var claudeAPI: ClaudeAPI?
 
-    private lazy var claudeAPI: ClaudeAPI = {
-        return ClaudeAPI(proxyURL: "\(Self.workerBaseURL)/chat", model: selectedModel)
-    }()
+    /// Free, on-device text-to-speech (Apple voices). Replaces ElevenLabs.
+    private let appleSpeechTTSClient = AppleSpeechTTSClient()
 
-    private lazy var elevenLabsTTSClient: ElevenLabsTTSClient = {
-        return ElevenLabsTTSClient(proxyURL: "\(Self.workerBaseURL)/tts")
-    }()
+    /// Direct bridge to the running Blender's MCP socket (localhost:9876).
+    private let blenderBridge = BlenderBridge()
+
+    /// Cursor-following bubble used to always show Clicky's reply as text,
+    /// regardless of whether spoken replies are turned on.
+    private let responseOverlayManager = CompanionResponseOverlayManager()
+
+    /// Whether replies are also spoken aloud (text is always shown either way).
+    /// User-toggleable; persisted across launches. Defaults to on.
+    @Published var speakRepliesAloud: Bool = UserDefaults.standard.object(forKey: "speakRepliesAloud") == nil
+        ? true
+        : UserDefaults.standard.bool(forKey: "speakRepliesAloud")
+
+    func setSpeakRepliesAloud(_ enabled: Bool) {
+        speakRepliesAloud = enabled
+        UserDefaults.standard.set(enabled, forKey: "speakRepliesAloud")
+    }
+
+    /// Whether an Anthropic API key is currently stored in the Keychain.
+    @Published private(set) var hasAnthropicAPIKey: Bool = KeychainStore.hasAnthropicAPIKey
+
+    /// When Claude proposes a destructive Blender change (delete / clear /
+    /// overwrite), we hold the exact Python here and ask the user to confirm
+    /// out loud before running it on their next push-to-talk.
+    private var pendingDestructiveBlenderCode: String?
+
+    /// Rebuilds the Claude client from the currently stored key (or clears it).
+    private func rebuildClaudeAPIFromStoredKey() {
+        if let storedKey = KeychainStore.anthropicAPIKey,
+           !storedKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            claudeAPI = ClaudeAPI(apiKey: storedKey, model: selectedModel)
+        } else {
+            claudeAPI = nil
+        }
+        hasAnthropicAPIKey = KeychainStore.hasAnthropicAPIKey
+    }
+
+    /// Saves a new Anthropic key to the Keychain and rebuilds the Claude client.
+    func saveAnthropicAPIKey(_ key: String) {
+        KeychainStore.saveAnthropicAPIKey(key)
+        rebuildClaudeAPIFromStoredKey()
+    }
+
+    /// Shows a simple dialog where the user can paste their Anthropic API key.
+    /// Used on first launch (when no key is stored) and from the menu later.
+    func promptForAnthropicAPIKey() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Paste your Claude (Anthropic) API key"
+        alert.informativeText = "Clicky stores it securely in your Mac's Keychain and talks to Claude directly. You can get a key at console.anthropic.com."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let keyInputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        keyInputField.placeholderString = "sk-ant-..."
+        if let existingKey = KeychainStore.anthropicAPIKey {
+            keyInputField.stringValue = existingKey
+        }
+        alert.accessoryView = keyInputField
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let enteredKey = keyInputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !enteredKey.isEmpty {
+                saveAnthropicAPIKey(enteredKey)
+            }
+        }
+    }
 
     /// Conversation history so Claude remembers prior exchanges within a session.
     /// Each entry is the user's transcript and Claude's response.
@@ -113,7 +177,7 @@ final class CompanionManager: ObservableObject {
     func setSelectedModel(_ model: String) {
         selectedModel = model
         UserDefaults.standard.set(model, forKey: "selectedClaudeModel")
-        claudeAPI.model = model
+        claudeAPI?.model = model
     }
 
     /// User preference for whether the Clicky cursor should be shown.
@@ -173,15 +237,30 @@ final class CompanionManager: ObservableObject {
     }
 
     func start() {
+        // This is a personal build — skip the original author's onboarding flow
+        // and mailing-list email capture so Clicky is usable immediately.
+        hasCompletedOnboarding = true
+        if !hasSubmittedEmail {
+            hasSubmittedEmail = true
+            UserDefaults.standard.set(true, forKey: "hasSubmittedEmail")
+        }
+
         refreshAllPermissions()
         print("🔑 Clicky start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
         startPermissionPolling()
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
-        // Eagerly touch the Claude API so its TLS warmup handshake completes
-        // well before the onboarding demo fires at ~40s into the video.
-        _ = claudeAPI
+        // Build the Claude client from the stored key (and warm its TLS).
+        rebuildClaudeAPIFromStoredKey()
+
+        // First launch with no key: ask the user to paste one so Clicky can
+        // actually talk to Claude. Deferred so it doesn't block startup.
+        if !hasAnthropicAPIKey {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.promptForAnthropicAPIKey()
+            }
+        }
 
         // If the user already completed onboarding AND all permissions are
         // still granted, show the cursor overlay immediately. If permissions
@@ -493,7 +572,7 @@ final class CompanionManager: ObservableObject {
 
             // Cancel any in-progress response and TTS from a previous utterance
             currentResponseTask?.cancel()
-            elevenLabsTTSClient.stopPlayback()
+            appleSpeechTTSClient.stopPlayback()
             clearDetectedElementLocation()
 
             // Dismiss the onboarding prompt if it's showing
@@ -542,180 +621,169 @@ final class CompanionManager: ObservableObject {
     // MARK: - Companion Prompt
 
     private static let companionVoiceResponseSystemPrompt = """
-    you're clicky, a friendly always-on companion that lives in the user's menu bar. the user just spoke to you via push-to-talk and you can see their screen(s). your reply will be spoken aloud via text-to-speech, so write the way you'd actually talk. this is an ongoing conversation — you remember everything they've said before.
+    you're big bot, a minimal, functional studio partner that helps the user work in blender. the user just spoke to you via push-to-talk, and you can see screenshots of their screen including the blender viewport. your reply may be spoken aloud, so write the way you'd actually talk. this is an ongoing conversation — you remember what was said before.
 
-    rules:
-    - default to one or two sentences. be direct and dense. BUT if the user asks you to explain more, go deeper, or elaborate, then go all out — give a thorough, detailed explanation with no length limit.
-    - all lowercase, casual, warm. no emojis.
-    - write for the ear, not the eye. short sentences. no lists, bullet points, markdown, or formatting — just natural speech.
-    - don't use abbreviations or symbols that sound weird read aloud. write "for example" not "e.g.", spell out small numbers.
-    - if the user's question relates to what's on their screen, reference specific things you see.
-    - if the screenshot doesn't seem relevant to their question, just answer the question directly.
-    - you can help with anything — coding, writing, general knowledge, brainstorming.
-    - never say "simply" or "just".
-    - don't read out code verbatim. describe what the code does or what needs to change conversationally.
-    - focus on giving a thorough, useful explanation. don't end with simple yes/no questions like "want me to explain more?" or "should i show you?" — those are dead ends that force the user to just say yes.
-    - instead, when it fits naturally, end by planting a seed — mention something bigger or more ambitious they could try, a related concept that goes deeper, or a next-level technique that builds on what you just explained. make it something worth coming back for, not a question they'd just nod to. it's okay to not end with anything extra if the answer is complete on its own.
-    - if you receive multiple screen images, the one labeled "primary focus" is where the cursor is — prioritize that one but reference others if relevant.
+    your personality:
+    - minimal and functional. do the thing, say little. default to one short sentence.
+    - you are NOT chatty. don't fill space, don't over-explain, don't ask follow-up questions, don't end with "want me to..." prompts.
+    - quiet executor by default: when the user asks for an action, just do it and confirm briefly ("done. raised it two meters.").
+    - creative nudge only when asked: ONLY when the user signals they're stuck or asks for ideas (for example "i'm stuck", "any ideas", "what would you do", "this looks off"), offer one concrete suggestion or workaround. keep it brief. the rest of the time, stay out of the way.
+    - all lowercase, warm but spare. no emojis. write for the ear: no lists, no markdown, spell out small numbers.
 
-    element pointing:
-    you have a small blue triangle cursor that can fly to and point at things on screen. use it whenever pointing would genuinely help the user — if they're asking how to do something, looking for a menu, trying to find a button, or need help navigating an app, point at the relevant element. err on the side of pointing rather than not pointing, because it makes your help way more useful and concrete.
+    driving blender:
+    - you control the user's running blender through two tools: get_blender_scene (read what's in the scene) and run_blender_python (run bpy code to inspect or change things).
+    - LOOK BEFORE YOU LEAP. when a request depends on what's in the scene (object names, selection, materials), call get_blender_scene first, then act on what's actually there. don't guess object names.
+    - run_blender_python runs real python with bpy. your code MUST assign a json-serializable dict to a variable named result, for example: result = {"moved": "Cube", "to_z": 2.0}. read that result to confirm what happened, then tell the user in plain words.
+    - chain tool calls as needed: inspect, then act, then verify. when you're done, give one short spoken confirmation.
+    - for visual questions ("does this look right", "what's off here"), actually look at the viewport screenshot and respond to what you see, then act if they want a change.
 
-    don't point at things when it would be pointless — like if the user asks a general knowledge question, or the conversation has nothing to do with what's on screen, or you'd just be pointing at something obvious they're already looking at. but if there's a specific UI element, menu, button, or area on screen that's relevant to what you're helping with, point at it.
+    safety — destructive actions:
+    - deleting objects, clearing the scene, or overwriting work is destructive. if you call run_blender_python with destructive code, the app will BLOCK it and return a message asking for confirmation.
+    - when that happens, do NOT retry the code. instead, tell the user in one short sentence exactly what will be removed and ask them to say "yes" to confirm. the app runs it on their next reply if they confirm.
+    - non-destructive changes (move, rotate, scale, color, add, material tweaks) just run — no need to ask.
 
-    when you point, append a coordinate tag at the very end of your response, AFTER your spoken text. the screenshot images are labeled with their pixel dimensions. use those dimensions as the coordinate space. the origin (0,0) is the top-left corner of the image. x increases rightward, y increases downward.
-
-    format: [POINT:x,y:label] where x,y are integer pixel coordinates in the screenshot's coordinate space, and label is a short 1-3 word description of the element (like "search bar" or "save button"). if the element is on the cursor's screen you can omit the screen number. if the element is on a DIFFERENT screen, append :screenN where N is the screen number from the image label (e.g. :screen2). this is important — without the screen number, the cursor will point at the wrong place.
-
-    if pointing wouldn't help, append [POINT:none].
-
-    examples:
-    - user asks how to color grade in final cut: "you'll want to open the color inspector — it's right up in the top right area of the toolbar. click that and you'll get all the color wheels and curves. [POINT:1100,42:color inspector]"
-    - user asks what html is: "html stands for hypertext markup language, it's basically the skeleton of every web page. curious how it connects to the css you're looking at? [POINT:none]"
-    - user asks how to commit in xcode: "see that source control menu up top? click that and hit commit, or you can use command option c as a shortcut. [POINT:285,11:source control]"
-    - element is on screen 2 (not where cursor is): "that's over on your other monitor — see the terminal window? [POINT:400,300:terminal:screen2]"
+    if a request has nothing to do with blender, you can still answer normally and briefly. if you can't reach blender, say so plainly (the user may need to open blender).
     """
 
     // MARK: - AI Response Pipeline
 
-    /// Captures a screenshot, sends it along with the transcript to Claude,
-    /// and plays the response aloud via ElevenLabs TTS. The cursor stays in
-    /// the spinner/processing state until TTS audio begins playing.
-    /// Claude's response may include a [POINT:x,y:label] tag which triggers
-    /// the buddy to fly to that element on screen.
+    /// Entry point for a spoken request. Handles three cases:
+    ///  1. A pending destructive-action confirmation (user says yes/no).
+    ///  2. No Claude key yet (prompt the user to add one).
+    ///  3. A normal request — runs the agentic Claude + Blender loop.
     private func sendTranscriptToClaudeWithScreenshot(transcript: String) {
         currentResponseTask?.cancel()
-        elevenLabsTTSClient.stopPlayback()
+        appleSpeechTTSClient.stopPlayback()
 
+        // Case 1: we're waiting on a yes/no for a destructive Blender change.
+        if let pendingCode = pendingDestructiveBlenderCode {
+            pendingDestructiveBlenderCode = nil
+            if Self.isAffirmativeConfirmation(transcript) {
+                currentResponseTask = Task {
+                    voiceState = .processing
+                    do {
+                        let runResult = try await blenderBridge.runPython(pendingCode)
+                        await presentResponse(runResult.didSucceed ? "done." : "that didn't work. \(runResult.summaryForModel)")
+                    } catch {
+                        await presentResponse("i couldn't reach blender.")
+                    }
+                    if !Task.isCancelled { voiceState = .idle; scheduleTransientHideIfNeeded() }
+                }
+                return
+            } else if Self.isNegativeConfirmation(transcript) {
+                currentResponseTask = Task {
+                    await presentResponse("okay, leaving it.")
+                    if !Task.isCancelled { voiceState = .idle; scheduleTransientHideIfNeeded() }
+                }
+                return
+            }
+            // Anything else: treat as a brand-new request (fall through).
+        }
+
+        // Case 2: no key stored yet.
+        guard let claudeAPI = claudeAPI else {
+            currentResponseTask = Task {
+                await presentResponse("i don't have your claude key yet. opening the box so you can paste it.")
+                promptForAnthropicAPIKey()
+                if !Task.isCancelled { voiceState = .idle; scheduleTransientHideIfNeeded() }
+            }
+            return
+        }
+
+        // Case 3: the normal agentic loop.
         currentResponseTask = Task {
-            // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
-
             do {
-                // Capture all connected screens so the AI has full context
-                let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
-
+                // Capture all screens so Claude can SEE the viewport. If screen
+                // recording isn't granted yet, continue WITHOUT images so Blender
+                // control still works — viewport vision is a bonus, not required.
+                let screenCaptures = (try? await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()) ?? []
                 guard !Task.isCancelled else { return }
 
-                // Build image labels with the actual screenshot pixel dimensions
-                // so Claude's coordinate space matches the image it sees. We
-                // scale from screenshot pixels to display points ourselves.
-                let labeledImages = screenCaptures.map { capture in
-                    let dimensionInfo = " (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)"
-                    return (data: capture.imageData, label: capture.label + dimensionInfo)
+                // First user message: every screenshot + the spoken request.
+                var currentUserContent: [[String: Any]] = []
+                for capture in screenCaptures {
+                    let isPNG = capture.imageData.starts(with: [0x89, 0x50, 0x4E, 0x47] as [UInt8])
+                    currentUserContent.append([
+                        "type": "image",
+                        "source": [
+                            "type": "base64",
+                            "media_type": isPNG ? "image/png" : "image/jpeg",
+                            "data": capture.imageData.base64EncodedString(),
+                        ],
+                    ])
+                    currentUserContent.append([
+                        "type": "text",
+                        "text": "\(capture.label) (image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels)",
+                    ])
                 }
+                currentUserContent.append(["type": "text", "text": transcript])
 
-                // Pass conversation history so Claude remembers prior exchanges
-                let historyForAPI = conversationHistory.map { entry in
-                    (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
+                // Replay prior exchanges as simple text so Claude has context.
+                var messages: [[String: Any]] = []
+                for entry in conversationHistory {
+                    messages.append(["role": "user", "content": entry.userTranscript])
+                    messages.append(["role": "assistant", "content": entry.assistantResponse])
                 }
+                messages.append(["role": "user", "content": currentUserContent])
 
-                let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
-                    images: labeledImages,
-                    systemPrompt: Self.companionVoiceResponseSystemPrompt,
-                    conversationHistory: historyForAPI,
-                    userPrompt: transcript,
-                    onTextChunk: { _ in
-                        // No streaming text display — spinner stays until TTS plays
+                let tools = Self.blenderToolDefinitions()
+
+                // Look-then-act loop: keep running tools until Claude is done.
+                var finalText = ""
+                var loopGuard = 0
+                while true {
+                    loopGuard += 1
+                    if loopGuard > 8 {
+                        if finalText.isEmpty { finalText = "i went back and forth on that one a bit too long — try asking again." }
+                        break
                     }
-                )
 
-                guard !Task.isCancelled else { return }
-
-                // Parse the [POINT:...] tag from Claude's response
-                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
-                let spokenText = parseResult.spokenText
-
-                // Handle element pointing if Claude returned coordinates.
-                // Switch to idle BEFORE setting the location so the triangle
-                // becomes visible and can fly to the target. Without this, the
-                // spinner hides the triangle and the flight animation is invisible.
-                let hasPointCoordinate = parseResult.coordinate != nil
-                if hasPointCoordinate {
-                    voiceState = .idle
-                }
-
-                // Pick the screen capture matching Claude's screen number,
-                // falling back to the cursor screen if not specified.
-                let targetScreenCapture: CompanionScreenCapture? = {
-                    if let screenNumber = parseResult.screenNumber,
-                       screenNumber >= 1 && screenNumber <= screenCaptures.count {
-                        return screenCaptures[screenNumber - 1]
-                    }
-                    return screenCaptures.first(where: { $0.isCursorScreen })
-                }()
-
-                if let pointCoordinate = parseResult.coordinate,
-                   let targetScreenCapture {
-                    // Claude's coordinates are in the screenshot's pixel space
-                    // (top-left origin, e.g. 1280x831). Scale to the display's
-                    // point space (e.g. 1512x982), then convert to AppKit global coords.
-                    let screenshotWidth = CGFloat(targetScreenCapture.screenshotWidthInPixels)
-                    let screenshotHeight = CGFloat(targetScreenCapture.screenshotHeightInPixels)
-                    let displayWidth = CGFloat(targetScreenCapture.displayWidthInPoints)
-                    let displayHeight = CGFloat(targetScreenCapture.displayHeightInPoints)
-                    let displayFrame = targetScreenCapture.displayFrame
-
-                    // Clamp to screenshot coordinate space
-                    let clampedX = max(0, min(pointCoordinate.x, screenshotWidth))
-                    let clampedY = max(0, min(pointCoordinate.y, screenshotHeight))
-
-                    // Scale from screenshot pixels to display points
-                    let displayLocalX = clampedX * (displayWidth / screenshotWidth)
-                    let displayLocalY = clampedY * (displayHeight / screenshotHeight)
-
-                    // Convert from top-left origin (screenshot) to bottom-left origin (AppKit)
-                    let appKitY = displayHeight - displayLocalY
-
-                    // Convert display-local coords to global screen coords
-                    let globalLocation = CGPoint(
-                        x: displayLocalX + displayFrame.origin.x,
-                        y: appKitY + displayFrame.origin.y
+                    let turn = try await claudeAPI.sendConversationTurn(
+                        systemPrompt: Self.companionVoiceResponseSystemPrompt,
+                        tools: tools,
+                        messages: messages
                     )
+                    guard !Task.isCancelled else { return }
 
-                    detectedElementScreenLocation = globalLocation
-                    detectedElementDisplayFrame = displayFrame
-                    ClickyAnalytics.trackElementPointed(elementLabel: parseResult.elementLabel)
-                    print("🎯 Element pointing: (\(Int(pointCoordinate.x)), \(Int(pointCoordinate.y))) → \"\(parseResult.elementLabel ?? "element")\"")
-                } else {
-                    print("🎯 Element pointing: \(parseResult.elementLabel ?? "no element")")
+                    if turn.toolUseRequests.isEmpty {
+                        finalText = turn.assistantText
+                        break
+                    }
+
+                    // Append Claude's tool_use turn verbatim, then run each tool.
+                    messages.append(["role": "assistant", "content": turn.assistantContentBlocks])
+
+                    var toolResultBlocks: [[String: Any]] = []
+                    for toolUse in turn.toolUseRequests {
+                        let toolResultText = await executeBlenderTool(toolUse)
+                        toolResultBlocks.append([
+                            "type": "tool_result",
+                            "tool_use_id": toolUse.id,
+                            "content": toolResultText,
+                        ])
+                    }
+                    messages.append(["role": "user", "content": toolResultBlocks])
                 }
 
-                // Save this exchange to conversation history (with the point tag
-                // stripped so it doesn't confuse future context)
-                conversationHistory.append((
-                    userTranscript: transcript,
-                    assistantResponse: spokenText
-                ))
+                guard !Task.isCancelled else { return }
 
-                // Keep only the last 10 exchanges to avoid unbounded context growth
+                // Strip any leftover [POINT:...] tag from the original behavior.
+                let spokenText = Self.parsePointingCoordinates(from: finalText).spokenText
+
+                conversationHistory.append((userTranscript: transcript, assistantResponse: spokenText))
                 if conversationHistory.count > 10 {
                     conversationHistory.removeFirst(conversationHistory.count - 10)
                 }
 
-                print("🧠 Conversation history: \(conversationHistory.count) exchanges")
-
                 ClickyAnalytics.trackAIResponseReceived(response: spokenText)
-
-                // Play the response via TTS. Keep the spinner (processing state)
-                // until the audio actually starts playing, then switch to responding.
-                if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    do {
-                        try await elevenLabsTTSClient.speakText(spokenText)
-                        // speakText returns after player.play() — audio is now playing
-                        voiceState = .responding
-                    } catch {
-                        ClickyAnalytics.trackTTSError(error: error.localizedDescription)
-                        print("⚠️ ElevenLabs TTS error: \(error)")
-                        speakCreditsErrorFallback()
-                    }
-                }
+                await presentResponse(spokenText)
             } catch is CancellationError {
-                // User spoke again — response was interrupted
+                // User spoke again — response was interrupted.
             } catch {
                 ClickyAnalytics.trackResponseError(error: error.localizedDescription)
                 print("⚠️ Companion response error: \(error)")
-                speakCreditsErrorFallback()
+                await presentResponse("something went wrong reaching claude. \(error.localizedDescription)")
             }
 
             if !Task.isCancelled {
@@ -723,6 +791,115 @@ final class CompanionManager: ObservableObject {
                 scheduleTransientHideIfNeeded()
             }
         }
+    }
+
+    /// Shows Clicky's reply as text near the cursor and, if the user has spoken
+    /// replies turned on, also reads it aloud with the Apple voice.
+    private func presentResponse(_ text: String) async {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return }
+
+        responseOverlayManager.showOverlayAndBeginStreaming()
+        responseOverlayManager.updateStreamingText(trimmedText)
+        responseOverlayManager.finishStreaming()
+
+        if speakRepliesAloud {
+            voiceState = .responding
+            await appleSpeechTTSClient.speakText(trimmedText)
+        }
+    }
+
+    // MARK: - Blender tools + safety
+
+    /// The tools Claude can call to inspect and drive Blender.
+    private static func blenderToolDefinitions() -> [ClaudeAPI.ToolDefinition] {
+        [
+            ClaudeAPI.ToolDefinition(
+                name: "get_blender_scene",
+                description: "Return a summary of every object in the current Blender scene (names, types, locations, selection), plus the active object and current mode. Call this first when you need to know what's in the scene before acting.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [String: Any](),
+                ]
+            ),
+            ClaudeAPI.ToolDefinition(
+                name: "run_blender_python",
+                description: "Run Python (bpy) inside the user's running Blender to inspect or modify the scene. The code MUST assign a JSON-serializable dict to a variable named `result`, for example: result = {\"moved\": \"Cube\"}. Use it to move/rotate/scale objects, change materials, add geometry, or read details. Destructive code (delete/clear/overwrite) will be blocked pending the user's spoken confirmation.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "code": [
+                            "type": "string",
+                            "description": "Python using bpy. Must assign a JSON-serializable dict to `result`.",
+                        ],
+                    ],
+                    "required": ["code"],
+                ]
+            ),
+        ]
+    }
+
+    /// Runs a tool Claude requested and returns a string result for Claude.
+    private func executeBlenderTool(_ toolUse: ClaudeAPI.ToolUseRequest) async -> String {
+        switch toolUse.name {
+        case "get_blender_scene":
+            do {
+                return try await blenderBridge.describeSceneObjects().summaryForModel
+            } catch {
+                return "Could not reach Blender: \(error.localizedDescription)"
+            }
+
+        case "run_blender_python":
+            guard let code = toolUse.input["code"] as? String, !code.isEmpty else {
+                return "No code was provided."
+            }
+            // Block destructive code the first time we see it, and stash it so
+            // the user can confirm out loud on their next push-to-talk.
+            if Self.isLikelyDestructiveBlenderCode(code) && pendingDestructiveBlenderCode == nil {
+                pendingDestructiveBlenderCode = code
+                return "BLOCKED_PENDING_CONFIRMATION: this looks destructive (it could delete or overwrite the user's work). Do NOT retry the code. Tell the user in one short sentence exactly what will be removed and ask them to say yes to confirm."
+            }
+            do {
+                let runResult = try await blenderBridge.runPython(code)
+                pendingDestructiveBlenderCode = nil
+                var combined = runResult.summaryForModel
+                if let output = runResult.standardOutput, !output.isEmpty {
+                    combined += "\nstdout: \(output)"
+                }
+                return combined
+            } catch {
+                return "Could not reach Blender: \(error.localizedDescription)"
+            }
+
+        default:
+            return "Unknown tool: \(toolUse.name)"
+        }
+    }
+
+    /// Heuristic: does this bpy code look like it deletes/clears/overwrites work?
+    /// Erring slightly toward caution here is intentional — the user asked for a
+    /// seatbelt on destructive actions only.
+    static func isLikelyDestructiveBlenderCode(_ code: String) -> Bool {
+        let lowercased = code.lowercased()
+        let destructiveSignals = [
+            "delete", ".remove(", ".unlink(", "read_homefile",
+            "ops.object.delete", "batch_remove", "ops.wm.read", "ops.wm.open",
+        ]
+        return destructiveSignals.contains { lowercased.contains($0) }
+    }
+
+    /// Does the transcript read like "yes, do it"?
+    static func isAffirmativeConfirmation(_ text: String) -> Bool {
+        let lowercased = text.lowercased()
+        let yesSignals = ["yes", "yeah", "yep", "yup", "confirm", "do it", "go ahead", "sure", "delete it", "go for it", "please do", "sounds good", "okay do", "ok do"]
+        return yesSignals.contains { lowercased.contains($0) }
+    }
+
+    /// Does the transcript read like "no, don't"?
+    static func isNegativeConfirmation(_ text: String) -> Bool {
+        let lowercased = text.lowercased()
+        let noSignals = ["no", "nope", "don't", "do not", "cancel", "stop", "wait", "nevermind", "never mind", "leave it", "forget it"]
+        return noSignals.contains { lowercased.contains($0) }
     }
 
     /// If the cursor is in transient mode (user toggled "Show Clicky" off),
@@ -735,7 +912,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask?.cancel()
         transientHideTask = Task {
             // Wait for TTS audio to finish playing
-            while elevenLabsTTSClient.isPlaying {
+            while appleSpeechTTSClient.isPlaying {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 guard !Task.isCancelled else { return }
             }
@@ -967,6 +1144,9 @@ final class CompanionManager: ObservableObject {
     func performOnboardingDemoInteraction() {
         // Don't interrupt an active voice response
         guard voiceState == .idle || voiceState == .responding else { return }
+
+        // Skip the onboarding pointing demo if there's no Claude key yet.
+        guard let claudeAPI = claudeAPI else { return }
 
         Task {
             do {
