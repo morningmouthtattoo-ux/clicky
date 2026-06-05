@@ -62,7 +62,13 @@ struct CompanionPanelView: View {
                 Spacer()
                     .frame(height: 16)
 
-                dmFarzaButton
+                speakAloudToggleRow
+                    .padding(.horizontal, 16)
+
+                Spacer()
+                    .frame(height: 8)
+
+                apiKeyButtonRow
                     .padding(.horizontal, 16)
             }
 
@@ -92,7 +98,7 @@ struct CompanionPanelView: View {
                     .frame(width: 8, height: 8)
                     .shadow(color: statusDotColor.opacity(0.6), radius: 4)
 
-                Text("Clicky")
+                Text("Big Bot")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(DS.Colors.textPrimary)
             }
@@ -544,6 +550,62 @@ struct CompanionPanelView: View {
     }
 
 
+
+    // MARK: - Big Bot Controls
+
+    /// Toggle for whether Big Bot speaks replies aloud (text is always shown).
+    private var speakAloudToggleRow: some View {
+        HStack {
+            HStack(spacing: 8) {
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .frame(width: 16)
+
+                Text("Speak replies aloud")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: Binding(
+                get: { companionManager.speakRepliesAloud },
+                set: { companionManager.setSpeakRepliesAloud($0) }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .tint(DS.Colors.accent)
+            .scaleEffect(0.8)
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Button to add or update the stored Anthropic (Claude) API key.
+    private var apiKeyButtonRow: some View {
+        Button(action: { companionManager.promptForAnthropicAPIKey() }) {
+            HStack(spacing: 8) {
+                Image(systemName: "key.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .frame(width: 16)
+
+                Text(companionManager.hasAnthropicAPIKey ? "Update Claude API key" : "Add Claude API key")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
+
+                Spacer()
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(DS.Colors.surface1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 
     // MARK: - Show Clicky Cursor Toggle
 

@@ -34,6 +34,11 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var sparkleUpdaterController: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Only ever run one Big Bot. If an older copy is still alive (e.g. a
+        // leftover after macOS relaunched the app following a permission grant),
+        // terminate it so we never get a double/echoing voice.
+        terminateOtherInstancesOfThisApp()
+
         print("🎯 Clicky: Starting...")
         print("🎯 Clicky: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
@@ -55,6 +60,21 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         companionManager.stop()
+    }
+
+    /// Terminates any other running copies of this app (same bundle id) so only
+    /// the newest instance survives. Prevents the duplicate/echoing-voice issue.
+    private func terminateOtherInstancesOfThisApp() {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
+        let myProcessIdentifier = ProcessInfo.processInfo.processIdentifier
+        let otherInstances = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .filter { $0.processIdentifier != myProcessIdentifier }
+        for instance in otherInstances {
+            if !instance.terminate() {
+                instance.forceTerminate()
+            }
+        }
     }
 
     /// Registers the app as a login item so it launches automatically on

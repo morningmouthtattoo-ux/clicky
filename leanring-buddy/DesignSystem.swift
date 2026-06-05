@@ -92,12 +92,11 @@ enum DS {
         // The primary fill is Blue 600; hover darkens to Blue 700.
 
         /// Accent fill — used for solid button backgrounds.
-        /// #2563eb → ~5.1:1 contrast with white text (WCAG AA).
-        static let accent = blue600
+        /// Big Bot's signature warm orange (#f97316), distinct from Clicky's blue.
+        static let accent = Color(hex: "#f97316")
 
-        /// Accent hover — slightly darker blue for hover state.
-        /// #1d4ed8 → ~6.5:1 contrast with white text (WCAG AA+).
-        static let accentHover = blue700
+        /// Accent hover — slightly darker orange for hover state.
+        static let accentHover = Color(hex: "#ea580c")
 
         /// Accent text — bright blue used for accent-colored text and icons
         /// on dark backgrounds (links, active nav items, highlighted labels).

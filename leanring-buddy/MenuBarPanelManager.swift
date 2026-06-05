@@ -71,40 +71,22 @@ final class MenuBarPanelManager: NSObject {
         button.target = self
     }
 
-    /// Draws the clicky triangle as a menu bar icon. Uses the same shape
-    /// and rotation as the in-app cursor so the menu bar icon matches.
+    /// Big Bot's menu bar mark — a distinct symbol so it's easy to tell apart
+    /// from the original Clicky. Rendered as a template image so macOS tints it
+    /// to match the menu bar (light/dark).
     private func makeClickyMenuBarIcon() -> NSImage {
-        let iconSize: CGFloat = 18
-        let image = NSImage(size: NSSize(width: iconSize, height: iconSize))
-        image.lockFocus()
-
-        let triangleSize = iconSize * 0.7
-        let cx = iconSize * 0.50
-        let cy = iconSize * 0.50
-        let height = triangleSize * sqrt(3.0) / 2.0
-
-        let top = CGPoint(x: cx, y: cy + height / 1.5)
-        let bottomLeft = CGPoint(x: cx - triangleSize / 2, y: cy - height / 3)
-        let bottomRight = CGPoint(x: cx + triangleSize / 2, y: cy - height / 3)
-
-        let angle = 35.0 * .pi / 180.0
-        func rotate(_ point: CGPoint) -> CGPoint {
-            let dx = point.x - cx, dy = point.y - cy
-            let cosA = CGFloat(cos(angle)), sinA = CGFloat(sin(angle))
-            return CGPoint(x: cx + cosA * dx - sinA * dy, y: cy + sinA * dx + cosA * dy)
+        let symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        if let symbolImage = NSImage(systemSymbolName: "bolt.horizontal.circle.fill", accessibilityDescription: "Big Bot")?
+            .withSymbolConfiguration(symbolConfiguration) {
+            return symbolImage
         }
-
-        let path = NSBezierPath()
-        path.move(to: rotate(top))
-        path.line(to: rotate(bottomLeft))
-        path.line(to: rotate(bottomRight))
-        path.close()
-
+        // Fallback: a plain dot if the SF Symbol is unavailable.
+        let fallbackImage = NSImage(size: NSSize(width: 16, height: 16))
+        fallbackImage.lockFocus()
         NSColor.black.setFill()
-        path.fill()
-
-        image.unlockFocus()
-        return image
+        NSBezierPath(ovalIn: NSRect(x: 3, y: 3, width: 10, height: 10)).fill()
+        fallbackImage.unlockFocus()
+        return fallbackImage
     }
 
     /// Opens the panel automatically on app launch so the user sees
