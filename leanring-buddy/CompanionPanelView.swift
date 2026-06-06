@@ -92,10 +92,11 @@ struct CompanionPanelView: View {
     private var panelHeader: some View {
         HStack {
             HStack(spacing: 8) {
-                // Smiley status indicator — colored by state (green when active).
+                // Smiley status indicator — warm yellow with a subtle glow.
                 Image(systemName: "face.smiling")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(statusDotColor)
+                    .foregroundColor(Color(hex: "#FFCC00"))
+                    .shadow(color: Color(hex: "#FFCC00").opacity(0.7), radius: 5)
 
                 Text("Big Bot")
                     .font(.system(size: 14, weight: .semibold))
