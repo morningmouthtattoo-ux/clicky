@@ -200,7 +200,7 @@ private struct CompanionResponseOverlayView: View {
                 .foregroundColor(DS.Colors.textPrimary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 300, alignment: .leading)
+                .frame(width: 300, alignment: .leading)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
